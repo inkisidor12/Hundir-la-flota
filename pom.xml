@@ -17,6 +17,12 @@
 
         <!-- JVM target compatible -->
         <kotlin.compiler.jvmTarget>17</kotlin.compiler.jvmTarget>
+
+        <!-- Coroutines -->
+        <coroutines.version>1.8.1</coroutines.version>
+
+        <!-- Serialization -->
+        <serialization.version>1.6.3</serialization.version>
     </properties>
 
     <dependencies>
@@ -26,11 +32,28 @@
             <artifactId>kotlin-stdlib</artifactId>
             <version>${kotlin.version}</version>
         </dependency>
+
+        <!-- Coroutines -->
+        <dependency>
+            <groupId>org.jetbrains.kotlinx</groupId>
+            <artifactId>kotlinx-coroutines-core</artifactId>
+            <version>${coroutines.version}</version>
+        </dependency>
+
+        <!-- Kotlinx Serialization JSON -->
+        <dependency>
+            <groupId>org.jetbrains.kotlinx</groupId>
+            <artifactId>kotlinx-serialization-json</artifactId>
+            <version>${serialization.version}</version>
+        </dependency>
     </dependencies>
 
     <build>
         <!-- Dónde están los fuentes Kotlin -->
         <sourceDirectory>src/main/kotlin</sourceDirectory>
+
+        <!-- NUEVO: por si haces tests en Kotlin -->
+        <testSourceDirectory>src/test/kotlin</testSourceDirectory>
 
         <plugins>
             <!-- Compilador Kotlin -->
@@ -48,9 +71,33 @@
                         </goals>
                         <configuration>
                             <jvmTarget>${kotlin.compiler.jvmTarget}</jvmTarget>
+                            <compilerPlugins>
+                                <plugin>serialization</plugin>
+                            </compilerPlugins>
+                        </configuration>
+                    </execution>
+
+                    <!-- NUEVO: para compilar tests en Kotlin si los añades -->
+                    <execution>
+                        <id>test-compile</id>
+                        <phase>test-compile</phase>
+                        <goals>
+                            <goal>test-compile</goal>
+                        </goals>
+                        <configuration>
+                            <jvmTarget>${kotlin.compiler.jvmTarget}</jvmTarget>
                         </configuration>
                     </execution>
                 </executions>
+
+                <!-- NUEVO: necesario para usar el compiler plugin "serialization" en Maven -->
+                <dependencies>
+                    <dependency>
+                        <groupId>org.jetbrains.kotlin</groupId>
+                        <artifactId>kotlin-maven-serialization</artifactId>
+                        <version>${kotlin.version}</version>
+                    </dependency>
+                </dependencies>
             </plugin>
 
             <!-- Ejecutar main -->
@@ -62,6 +109,7 @@
                     <mainClass>com.ivan_martinez.MainKt</mainClass>
                 </configuration>
             </plugin>
+
         </plugins>
     </build>
 
