@@ -53,7 +53,7 @@
         <sourceDirectory>src/main/kotlin</sourceDirectory>
 
         <!-- NUEVO: por si haces tests en Kotlin -->
-        <testSourceDirectory>src/test/kotlin</testSourceDirectory>
+        <!-- <testSourceDirectory>src/test/kotlin</testSourceDirectory>-->
 
         <plugins>
             <!-- Compilador Kotlin -->
@@ -72,7 +72,7 @@
                         <configuration>
                             <jvmTarget>${kotlin.compiler.jvmTarget}</jvmTarget>
                             <compilerPlugins>
-                                <plugin>serialization</plugin>
+                                <plugin>kotlinx-serialization</plugin>
                             </compilerPlugins>
                         </configuration>
                     </execution>
@@ -97,6 +97,9 @@
                         <artifactId>kotlin-maven-serialization</artifactId>
                         <version>${kotlin.version}</version>
                     </dependency>
+
+
+
                 </dependencies>
             </plugin>
 
