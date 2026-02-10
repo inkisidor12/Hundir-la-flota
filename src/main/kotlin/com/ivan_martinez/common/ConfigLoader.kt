@@ -6,7 +6,7 @@ import java.util.Properties
 object ConfigLoader {
 
     /**
-     * Lee server.properties desde src/main/resources
+     * Lee server.properties desde src/main/resources y lo converte en Server configh
      */
     fun loadServerConfig(resourceName: String = "server.properties"): ServerConfig {
         val props = Properties()

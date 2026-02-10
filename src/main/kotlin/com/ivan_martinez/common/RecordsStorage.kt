@@ -10,6 +10,7 @@ import java.nio.file.StandardCopyOption
 object RecordsStorage {
 
     // JSON “amigable” (bonito e ignora campos desconocidos)
+    // esto no se que ha hace chat gpt pero hace que no utilice cosas raras el json
     private val json = Json {
         prettyPrint = true
         ignoreUnknownKeys = true
