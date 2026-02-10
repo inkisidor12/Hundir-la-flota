@@ -24,7 +24,7 @@ object RecordsStorage {
         val content = Files.readString(path).trim()
         if (content.isEmpty()) return Records()
 
-        // ✅ FORMA CORRECTA
+
         return json.decodeFromString<Records>(content)
     }
 
