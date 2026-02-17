@@ -65,13 +65,13 @@ private fun menuLoop(
         print("Opción: ")
 
         when (readLine()?.trim()) {
-            "1" -> println("🚧 PVP aún no implementado")
-            "2" -> println("🚧 PVE aún no implementado")
+            "1" -> println(" PVP aún no implementado")
+            "2" -> println(" PVE aún no implementado")
             "3" -> showRecords(records)
             "4" -> {
                 settings = settingsMenu(settings)
                 ClientSettingsStorage.save(settingsPath, settings)
-                println("✅ Configuración guardada.")
+                println(" Configuración guardada.")
             }
             "5" -> {
                 println("Saliendo...")
