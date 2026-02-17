@@ -1,12 +1,8 @@
 package com.ivan_martinez.client
 
-import com.ivan_martinez.common.ClientSettings
-import com.ivan_martinez.common.ClientSettingsStorage
-import com.ivan_martinez.common.ConfigLoader
-import com.ivan_martinez.common.Difficulty
-import com.ivan_martinez.common.Protocol
-import com.ivan_martinez.common.Records
+import com.ivan_martinez.common.*
 import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.io.BufferedReader
 import java.io.InputStreamReader
@@ -15,12 +11,15 @@ import java.net.Socket
 import java.nio.file.Path
 import java.nio.file.Paths
 
-private val json = Json { ignoreUnknownKeys = true; prettyPrint = true }
+private val json = Json { ignoreUnknownKeys = true; }
+
+// Wrapper para poder “actualizar” records desde funciones sin tener que rehacer toda la arquitectura
+private data class RecordsRef(var value: Records)
 
 fun main() {
     val config = ConfigLoader.loadServerConfig()
 
-    //  settings se cargan ANTES del menú y se pasan al menú
+    // settings se cargan ANTES del menú y se pasan al menú
     val dataDir = Paths.get("data")
     dataDir.toFile().mkdirs()
     val settingsPath = dataDir.resolve("client-settings.json")
@@ -32,21 +31,45 @@ fun main() {
 
         // 1) Esperamos el primer mensaje RECORDS del servidor
         val firstLine = input.readLine() ?: error("Servidor cerró la conexión")
-        val (type, payload) = Protocol.decode(firstLine)
-        require(type == "RECORDS") { "Se esperaba RECORDS y llegó $type" }
+        val (t1, p1) = Protocol.decode(firstLine)
+        require(t1 == "RECORDS") { "Se esperaba RECORDS y llegó $t1" }
 
-        val records = json.decodeFromString<Records>(payload)
-        println(" Records sincronizados. Jugadores: ${records.players.size}")
+        // records ahora es “mutable” vía RecordsRef (para poder refrescar tras partidas)
+        val recordsRef = RecordsRef(json.decodeFromString<Records>(p1))
+        println("✅ Records sincronizados. Jugadores: ${recordsRef.value.players.size}")
 
-        println(" Config actual: board=${settings.boardSize}, bestOf=${settings.bestOf}, turn=${settings.turnTimeSeconds}s, diff=${settings.difficulty}")
+        // Saluda al cliente
+        print("Nombre de jugador: ")
+        val name = readLine()?.trim().orEmpty()
+        output.println(Protocol.encode("HELLO", json.encodeToString(Hello(name))))
 
-        // 2) Menú
-        menuLoop(records, output, input, settingsPath, settings)
+        // 2) Segundo mensaje (INFO) si llega, lo leemos pero no es obligatorio para el menú
+        // (Si el server manda algo que no sea INFO, lo mostramos y seguimos)
+        val secondLine = input.readLine()
+        if (secondLine != null) {
+            val decoded = runCatching { Protocol.decode(secondLine) }.getOrNull()
+            if (decoded != null) {
+                val (t2, p2) = decoded
+                if (t2 == "INFO") {
+                    val info = runCatching { json.decodeFromString<InfoMessage>(p2) }.getOrNull()
+                    if (info != null) println("ℹ️ ${info.message}")
+                } else {
+                    println("ℹ️ Mensaje inicial extra: $t2")
+                }
+            } else {
+                println("ℹ️ Mensaje inicial extra: $secondLine")
+            }
+        }
+
+        println("⚙️ Config actual: board=${settings.boardSize}, bestOf=${settings.bestOf}, turn=${settings.turnTimeSeconds}s, diff=${settings.difficulty}")
+
+        // 3) Menú
+        menuLoop(recordsRef, output, input, settingsPath, settings)
     }
 }
 
 private fun menuLoop(
-    records: Records,
+    recordsRef: RecordsRef,
     output: PrintWriter,
     input: BufferedReader,
     settingsPath: Path,
@@ -58,28 +81,200 @@ private fun menuLoop(
         println()
         println("=== HUNDIR LA FLOTA ONLINE ===")
         println("1) Nueva Partida PVP (pendiente)")
-        println("2) Nueva Partida PVE (pendiente)")
+        println("2) Nueva Partida PVE")
         println("3) Ver Records")
         println("4) Configuración")
         println("5) Salir")
         print("Opción: ")
 
         when (readLine()?.trim()) {
-            "1" -> println(" PVP aún no implementado")
-            "2" -> println(" PVE aún no implementado")
-            "3" -> showRecords(records)
+            "1" -> println("🚧 PVP aún no implementado")
+            "2" -> {
+                startPve(output, input, settings)
+                // Tras terminar PVE, refrescamos records del servidor para que “Ver Records” muestre lo último
+                refreshRecords(recordsRef, output, input)
+            }
+            "3" -> showRecords(recordsRef.value)
             "4" -> {
                 settings = settingsMenu(settings)
                 ClientSettingsStorage.save(settingsPath, settings)
-                println(" Configuración guardada.")
+                println("✅ Configuración guardada.")
             }
             "5" -> {
                 println("Saliendo...")
-                output.println("SALIR")
-                input.readLine() // BYE si el server lo envía
+                output.println(Protocol.encode("SALIR", json.encodeToString(InfoMessage("bye"))))
+                input.readLine() // BYE...
                 return
             }
             else -> println("Opción inválida")
+        }
+    }
+}
+
+private fun refreshRecords(recordsRef: RecordsRef, output: PrintWriter, input: BufferedReader) {
+    // Pedimos records actualizados al servidor
+    output.println(Protocol.encode("GET_RECORDS", json.encodeToString(InfoMessage("get"))))
+
+    // Esperamos RECORDS (saltando INFO si aparece)
+    while (true) {
+        val line = input.readLine() ?: return
+        val (t, p) = Protocol.decode(line)
+
+        when (t) {
+            "RECORDS" -> {
+                recordsRef.value = json.decodeFromString<Records>(p)
+                println("✅ Records actualizados. Jugadores: ${recordsRef.value.players.size}")
+                return
+            }
+            "INFO" -> {
+                // ignorar
+            }
+            "ERROR" -> {
+                val err = runCatching { json.decodeFromString<ErrorMessage>(p) }.getOrNull()
+                println("❌ No se pudieron actualizar records: ${err?.message ?: p}")
+                return
+            }
+            else -> {
+                // ignoramos cualquier otra cosa
+            }
+        }
+    }
+}
+
+private fun startPve(output: PrintWriter, input: BufferedReader, settings: ClientSettings) {
+    println()
+    println("=== PVE: NUEVA PARTIDA ===")
+
+    // 1) Pedimos al servidor crear partida PVE
+    val req = NewGamePveRequest(settings)
+    output.println(Protocol.encode("NEW_GAME_PVE", json.encodeToString(req)))
+
+    // 2) Esperamos GAME_STARTED (saltando INFO u otros mensajes)
+    var started: GameStarted? = null
+
+    while (started == null) {
+        val line = input.readLine() ?: run {
+            println("Servidor desconectado.")
+            return
+        }
+
+        val (type, payload) = Protocol.decode(line)
+
+        when (type) {
+            "GAME_STARTED" -> started = json.decodeFromString<GameStarted>(payload)
+
+            "ERROR" -> {
+                val err = runCatching { json.decodeFromString<ErrorMessage>(payload) }.getOrNull()
+                println("❌ Error: ${err?.message ?: payload}")
+                return
+            }
+
+            "INFO" -> {
+                val info = runCatching { json.decodeFromString<InfoMessage>(payload) }.getOrNull()
+                if (info != null) println("ℹ️ ${info.message}")
+            }
+
+            // si llega TURN antes (no debería, pero por seguridad)
+            "TURN" -> {
+                // lo ignoramos aquí; luego ya leeremos el turno
+            }
+
+            else -> {
+                // ignoramos mensajes desconocidos mientras esperamos GAME_STARTED
+                println("⚠️ Ignorando mensaje: $type")
+            }
+        }
+    }
+
+    val size = started.boardSize
+
+    // 3) Construimos estado local para render
+    val myBoard = ClientBoard(size)
+    val enemyRadar = Radar(size)
+
+    // Colocación (servidor nos manda nuestros barcos)
+    for (ship in started.myShips) {
+        myBoard.placeShip(ship.positions)
+    }
+
+    // 4) Esperamos TURN inicial (PLAYER)
+    val turnLine = input.readLine() ?: run {
+        println("Servidor desconectado.")
+        return
+    }
+    val (tTurn, pTurn) = Protocol.decode(turnLine)
+    if (tTurn == "TURN") {
+        val turn = json.decodeFromString<TurnMessage>(pTurn)
+        if (turn.who != Attacker.PLAYER) {
+            println("⚠️ Turno inesperado: ${turn.who}")
+        }
+    }
+
+    // 5) Bucle de juego
+    while (true) {
+        println()
+        renderBoards(myBoard, enemyRadar)
+
+        print("Tu ataque (ej: A1, C4) o 'salir': ")
+        val pos = readLine()?.trim() ?: return
+        if (pos.equals("salir", ignoreCase = true)) return
+
+        output.println(Protocol.encode("ATTACK", json.encodeToString(AttackRequest(pos))))
+
+        // Leemos mensajes hasta que vuelva a ser nuestro turno o acabe la partida
+        while (true) {
+            val msgLine = input.readLine() ?: run {
+                println("Servidor desconectado.")
+                return
+            }
+            val (mt, mp) = Protocol.decode(msgLine)
+
+            when (mt) {
+                "ATTACK_RESULT" -> {
+                    val res = json.decodeFromString<AttackResult>(mp)
+                    if (res.by == Attacker.PLAYER) {
+                        // afecta a radar enemigo
+                        enemyRadar.mark(res.position, res.result)
+                        println("🎯 Tú: ${res.position} -> ${res.result}${if (res.sunk) " (HUNDIDO ${res.sunkShip})" else ""}")
+                    } else {
+                        // afecta a mi tablero
+                        myBoard.markShot(res.position, res.result)
+                        println("💥 IA: ${res.position} -> ${res.result}${if (res.sunk) " (HUNDIDO ${res.sunkShip})" else ""}")
+                    }
+                }
+
+                "TURN" -> {
+                    val turn = json.decodeFromString<TurnMessage>(mp)
+                    if (turn.who == Attacker.PLAYER) {
+                        break // volvemos a pedir coordenada
+                    }
+                }
+
+                "GAME_OVER" -> {
+                    val over = json.decodeFromString<GameOver>(mp)
+                    println()
+                    println("🏁 GAME OVER -> ganador: ${over.winner} (${over.reason})")
+                    renderBoards(myBoard, enemyRadar)
+                    return
+                }
+
+                "ERROR" -> {
+                    val err = runCatching { json.decodeFromString<ErrorMessage>(mp) }.getOrNull()
+                    println("❌ Error: ${err?.message ?: mp}")
+                    // en caso de error, volvemos a pedir ataque
+                    break
+                }
+
+                "INFO" -> {
+                    val info = runCatching { json.decodeFromString<InfoMessage>(mp) }.getOrNull()
+                    if (info != null) println("ℹ️ ${info.message}")
+                }
+
+                else -> {
+                    // Mensaje desconocido: lo mostramos por si acaso
+                    println("⚠️ Mensaje desconocido: $mt -> $mp")
+                }
+            }
         }
     }
 }
@@ -142,3 +337,119 @@ private fun showRecords(records: Records) {
         println("- $name | PVP: ${stats.pvpWins}W/${stats.pvpLosses}L | PVE: ${stats.pveWins}W/${stats.pveLosses}L | Best streak: ${stats.bestWinStreak} | Accuracy: ${"%.2f".format(acc)}%")
     }
 }
+
+/**
+ * Tablero del jugador (se ve con barcos) + impactos recibidos.
+ */
+private class ClientBoard(private val size: Int) {
+    private val ships = Array(size) { CharArray(size) { '.' } } // '.' agua, 'S' barco
+    private val shots = Array(size) { CharArray(size) { ' ' } } // 'H' hit, 'M' miss, ' ' nada
+
+    fun placeShip(positions: List<String>) {
+        for (p in positions) {
+            val rc = parsePos(p) ?: continue
+            ships[rc.first][rc.second] = 'S'
+        }
+    }
+
+    fun markShot(position: String, result: ShotResult) {
+        val rc = parsePos(position) ?: return
+        shots[rc.first][rc.second] = if (result == ShotResult.HIT) 'H' else 'M'
+    }
+
+    fun renderLines(): List<String> {
+        val lines = mutableListOf<String>()
+        lines.add(headerLine())
+        for (r in 0 until size) {
+            val rowNum = (r + 1).toString().padStart(2, ' ')
+            val sb = StringBuilder()
+            sb.append(rowNum).append(" ")
+            for (c in 0 until size) {
+                val ch = when (shots[r][c]) {
+                    'H' -> 'X'
+                    'M' -> 'o'
+                    else -> ships[r][c] // 'S' o '.'
+                }
+                sb.append(ch).append(' ')
+            }
+            lines.add(sb.toString())
+        }
+        return lines
+    }
+
+    private fun headerLine(): String {
+        val sb = StringBuilder("   ")
+        for (c in 0 until size) sb.append(('A'.code + c).toChar()).append(' ')
+        return sb.toString()
+    }
+
+    private fun parsePos(pos: String): Pair<Int, Int>? {
+        val p = pos.trim().uppercase()
+        if (p.length < 2) return null
+        val col = p[0] - 'A'
+        val row = p.substring(1).toIntOrNull()?.minus(1) ?: return null
+        if (row !in 0 until size || col !in 0 until size) return null
+        return row to col
+    }
+}
+
+/**
+ * Radar enemigo: solo sabemos si hemos acertado (H) o fallado (M).
+ */
+private class Radar(private val size: Int) {
+    private val grid = Array(size) { CharArray(size) { ' ' } } // 'H', 'M', ' '
+
+    fun mark(position: String, result: ShotResult) {
+        val rc = parsePos(position) ?: return
+        grid[rc.first][rc.second] = if (result == ShotResult.HIT) 'H' else 'M'
+    }
+
+    fun renderLines(): List<String> {
+        val lines = mutableListOf<String>()
+        lines.add(headerLine())
+        for (r in 0 until size) {
+            val rowNum = (r + 1).toString().padStart(2, ' ')
+            val sb = StringBuilder()
+            sb.append(rowNum).append(" ")
+            for (c in 0 until size) {
+                val ch = when (grid[r][c]) {
+                    'H' -> 'X'
+                    'M' -> 'o'
+                    else -> '.'
+                }
+                sb.append(ch).append(' ')
+            }
+            lines.add(sb.toString())
+        }
+        return lines
+    }
+
+    private fun headerLine(): String {
+        val sb = StringBuilder("   ")
+        for (c in 0 until size) sb.append(('A'.code + c).toChar()).append(' ')
+        return sb.toString()
+    }
+
+    private fun parsePos(pos: String): Pair<Int, Int>? {
+        val p = pos.trim().uppercase()
+        if (p.length < 2) return null
+        val col = p[0] - 'A'
+        val row = p.substring(1).toIntOrNull()?.minus(1) ?: return null
+        if (row !in 0 until size || col !in 0 until size) return null
+        return row to col
+    }
+}
+
+private fun renderBoards(my: ClientBoard, radar: Radar) {
+    val left = my.renderLines()
+    val right = radar.renderLines()
+    val titleLeft = "MI FLOTA"
+    val titleRight = "RADAR ENEMIGO"
+    println(titleLeft.padEnd(28) + "   " + titleRight)
+    for (i in left.indices) {
+        val l = left[i].padEnd(28)
+        val r = right.getOrNull(i) ?: ""
+        println("$l   $r")
+    }
+}
+

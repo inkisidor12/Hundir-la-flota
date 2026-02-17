@@ -8,3 +8,6 @@ data class InfoMessage(val message: String)
 
 @Serializable
 data class ErrorMessage(val message: String)
+
+@Serializable
+data class Hello(val name: String)

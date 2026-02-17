@@ -46,3 +46,4 @@ enum class ShipType(val size: Int) {
     CRUISER(3),
     DESTROYER(2)
 }
+

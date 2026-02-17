@@ -4,12 +4,25 @@ package com.ivan_martinez.server
 import com.ivan_martinez.common.*
 import kotlin.random.Random
 
+data class PveStats(
+    val playerShots: Int,
+    val playerHits: Int,
+    val playerTurns: Int
+)
+
+
 class PveSession(val size: Int) {
     private val playerBoard = BattleshipBoard.randomBoard(size)
     private val aiBoard = BattleshipBoard.randomBoard(size)
 
     private val aiTried = mutableSetOf<Pair<Int, Int>>()
     private val rng = Random.Default
+
+    private var playerShots = 0
+    private var playerHits = 0
+    private var playerTurns = 0
+
+    fun statsSnapshot(): PveStats = PveStats(playerShots, playerHits, playerTurns)
 
     fun gameStartedPayload(): GameStarted {
         val myShips = playerBoard.placementsAsPositions().map { (ship, cells) ->
@@ -43,6 +56,10 @@ class PveSession(val size: Int) {
             return messages
         }
 
+        playerShots++
+        playerTurns++
+        if (out.hit) playerHits++
+
         // Turno IA
         val aiMove = aiAttack()
         messages.add(aiMove)
@@ -72,4 +89,5 @@ class PveSession(val size: Int) {
             sunkShip = out.sunkShip
         )
     }
+
 }

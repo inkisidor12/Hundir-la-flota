@@ -1,1 +1,12 @@
-{}
+{
+    "players": {
+        "ivan": {
+            "pveWins": 2,
+            "bestWinStreak": 2,
+            "currentWinStreak": 2,
+            "shots": 154,
+            "hits": 58,
+            "fastestWinTurns": 74
+        }
+    }
+}

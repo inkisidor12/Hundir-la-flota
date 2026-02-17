@@ -71,9 +71,12 @@
                         </goals>
                         <configuration>
                             <jvmTarget>${kotlin.compiler.jvmTarget}</jvmTarget>
+
                             <compilerPlugins>
+                                <!-- ✅ CORRECTO en Maven -->
                                 <plugin>kotlinx-serialization</plugin>
                             </compilerPlugins>
+
                         </configuration>
                     </execution>
 
@@ -97,9 +100,6 @@
                         <artifactId>kotlin-maven-serialization</artifactId>
                         <version>${kotlin.version}</version>
                     </dependency>
-
-
-
                 </dependencies>
             </plugin>
 
