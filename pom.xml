@@ -46,6 +46,13 @@
             <artifactId>kotlinx-serialization-json</artifactId>
             <version>${serialization.version}</version>
         </dependency>
+
+        <!-- NUEVO: runtime de Kotlin serialization (ayuda a consistencia en Maven/IDE) -->
+        <dependency>
+            <groupId>org.jetbrains.kotlin</groupId>
+            <artifactId>kotlin-serialization</artifactId>
+            <version>${kotlin.version}</version>
+        </dependency>
     </dependencies>
 
     <build>
@@ -89,6 +96,12 @@
                         </goals>
                         <configuration>
                             <jvmTarget>${kotlin.compiler.jvmTarget}</jvmTarget>
+
+                            <!-- NUEVO: también aplicar serialization a tests (evita inconsistencias) -->
+                            <compilerPlugins>
+                                <plugin>kotlinx-serialization</plugin>
+                            </compilerPlugins>
+
                         </configuration>
                     </execution>
                 </executions>

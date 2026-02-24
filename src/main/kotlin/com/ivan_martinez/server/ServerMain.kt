@@ -28,6 +28,8 @@ fun main() = runBlocking {
     val serverSocket = ServerSocket(config.port)
     println("Servidor escuchando en ${config.host}:${config.port} (maxClients=${config.maxClients})")
 
+
+
     while (true) {
         val client = serverSocket.accept()
         println("Cliente conectado: ${client.inetAddress.hostAddress}:${client.port}")
@@ -41,6 +43,7 @@ fun main() = runBlocking {
 private fun handleClient(socket: Socket, recordsPath: Path) {
     // nombre del cliente
     var playerName: String? = null
+    var pvpSession: PvpSession? = null
 
     val json = Json {
         ignoreUnknownKeys = true
@@ -133,8 +136,74 @@ private fun handleClient(socket: Socket, recordsPath: Path) {
                     output.println(Protocol.encode("RECORDS", json.encodeToString(rec)))
                 }
 
+                "QUEUE_PVP" -> {
+                    val name = playerName
+                    if (name == null) {
+                        output.println(Protocol.encode("ERROR", json.encodeToString(ErrorMessage("Primero envía HELLO"))))
+                        continue
+                    }
+
+                    val req = json.decodeFromString<QueuePvpRequest>(payload)
+
+                    // función para enviar mensajes por protocolo al cliente actual
+                    val sendMe: (String, String) -> Unit = { t, p -> output.println(Protocol.encode(t, p)) }
+
+                    val me = WaitingPvpPlayer(
+                        name = name,
+                        settings = req.settings,
+                        send = sendMe,
+                        attachSession = { s -> pvpSession = s }
+                    )
+
+                    val other = PvpQueue.enqueueOrMatch(me)
+                    if (other == null) {
+                        sendMe("INFO", json.encodeToString(InfoMessage("Esperando rival...")))
+                    } else {
+                        // Creamos tableros para ambos (auto-colocación por ahora)
+                        val size = req.settings.boardSize
+
+                        val aOwn = BattleshipBoard.randomBoard(size)
+                        val bOwn = BattleshipBoard.randomBoard(size)
+
+                        // targetBoard: donde el rival dispara (mis barcos). En este diseño, targetBoard es mi propio tablero.
+                        val session = PvpSession(
+                            size = size,
+                            a = PvpSession.Side(name = other.name, send = other.send, ownBoard = bOwn, targetBoard = bOwn),
+                            b = PvpSession.Side(name = name, send = sendMe, ownBoard = aOwn, targetBoard = aOwn)
+                        )
+
+                        // Enganchamos sesión en ambos handlers
+                        other.attachSession(session)
+                        pvpSession = session
+
+                        // Avisamos y empezamos
+                        other.send("INFO", json.encodeToString(InfoMessage("Rival encontrado: $name")))
+                        sendMe("INFO", json.encodeToString(InfoMessage("Rival encontrado: ${other.name}")))
+
+                        session.start(json)
+                    }
+                }
+                "PVP_ATTACK" -> {
+                    val sPvp = pvpSession
+                    val name = playerName
+                    if (sPvp == null || name == null) {
+                        output.println(Protocol.encode("ERROR", json.encodeToString(ErrorMessage("No hay partida PVP activa"))))
+                        continue
+                    }
+
+                    val req = json.decodeFromString<AttackRequest>(payload)
+                    val winnerName = sPvp.attack(name, req.position, json)
+
+                    if (winnerName != null) {
+                        // Aquí luego actualizamos records PVP (wins/losses, etc.)
+                        // Por ahora: al terminar, dejamos la sesión a null
+                        pvpSession = null
+                    }
+                }
+
                 "SALIR" -> {
                     output.println(Protocol.encode("BYE", json.encodeToString(InfoMessage("Hasta luego"))))
+                    playerName?.let { PvpQueue.cancelIfWaiting(it) }
                     break
                 }
 

@@ -80,7 +80,7 @@ private fun menuLoop(
     while (true) {
         println()
         println("=== HUNDIR LA FLOTA ONLINE ===")
-        println("1) Nueva Partida PVP (pendiente)")
+        println("1) Nueva Partida PVP")
         println("2) Nueva Partida PVE")
         println("3) Ver Records")
         println("4) Configuración")
@@ -88,7 +88,11 @@ private fun menuLoop(
         print("Opción: ")
 
         when (readLine()?.trim()) {
-            "1" -> println("🚧 PVP aún no implementado")
+            "1" -> {
+                startPvp(output, input, settings)
+                // Tras terminar PVP, refrescamos records del servidor para que “Ver Records” muestre lo último
+                refreshRecords(recordsRef, output, input)
+            }
             "2" -> {
                 startPve(output, input, settings)
                 // Tras terminar PVE, refrescamos records del servidor para que “Ver Records” muestre lo último
@@ -136,6 +140,124 @@ private fun refreshRecords(recordsRef: RecordsRef, output: PrintWriter, input: B
             }
             else -> {
                 // ignoramos cualquier otra cosa
+            }
+        }
+    }
+}
+
+private fun startPvp(output: PrintWriter, input: BufferedReader, settings: ClientSettings) {
+    println()
+    println("=== PVP: BUSCANDO RIVAL ===")
+
+    // 1) Entramos en la cola PVP (matchmaking simple)
+    val req = QueuePvpRequest(settings)
+    output.println(Protocol.encode("QUEUE_PVP", json.encodeToString(req)))
+
+    // 2) Esperamos PVP_MATCH_FOUND (saltando INFO/ERROR)
+    var match: MatchFound? = null
+    while (match == null) {
+        val line = input.readLine() ?: run {
+            println("Servidor desconectado.")
+            return
+        }
+        val (t, p) = Protocol.decode(line)
+
+        when (t) {
+            "PVP_MATCH_FOUND" -> match = json.decodeFromString<MatchFound>(p)
+
+            "INFO" -> {
+                val info = runCatching { json.decodeFromString<InfoMessage>(p) }.getOrNull()
+                if (info != null) println("ℹ️ ${info.message}")
+            }
+
+            "ERROR" -> {
+                val err = runCatching { json.decodeFromString<ErrorMessage>(p) }.getOrNull()
+                println("❌ Error: ${err?.message ?: p}")
+                return
+            }
+
+            else -> {
+                // ignoramos cualquier otra cosa mientras esperamos rival
+                println("⚠️ Ignorando mensaje: $t")
+            }
+        }
+    }
+
+    val size = match.boardSize
+    val myBoard = ClientBoard(size)
+    val enemyRadar = Radar(size)
+
+    // Colocación (servidor nos manda nuestros barcos auto-colocados)
+    for (ship in match.myShips) {
+        myBoard.placeShip(ship.positions)
+    }
+
+    println("✅ Rival encontrado: ${match.opponentName}")
+    println("✅ Empieza la partida PVP.")
+
+    // 3) Bucle de juego PVP: esperamos turnos y resultados
+    while (true) {
+        val line = input.readLine() ?: run {
+            println("Servidor desconectado.")
+            return
+        }
+        val (t, p) = Protocol.decode(line)
+
+        when (t) {
+            "PVP_TURN" -> {
+                val turn = json.decodeFromString<PvpTurn>(p)
+
+                if (turn.who == PvpWho.YOU) {
+                    // Mi turno: render + pedir ataque
+                    println()
+                    renderBoards(myBoard, enemyRadar)
+
+                    print("Tu ataque (ej: A1, C4) o 'salir': ")
+                    val pos = readLine()?.trim() ?: return
+                    if (pos.equals("salir", ignoreCase = true)) return
+
+                    output.println(Protocol.encode("PVP_ATTACK", json.encodeToString(AttackRequest(pos))))
+                } else {
+                    // Turno del rival: no hacemos nada, solo esperamos resultados
+                    println("⏳ Turno del rival...")
+                }
+            }
+
+            "PVP_ATTACK_RESULT_YOU" -> {
+                // Resultado de MI disparo
+                val res = json.decodeFromString<AttackResult>(p)
+                enemyRadar.mark(res.position, res.result)
+                println("🎯 Tú: ${res.position} -> ${res.result}${if (res.sunk) " (HUNDIDO ${res.sunkShip})" else ""}")
+            }
+
+            "PVP_ATTACK_RESULT_OPP" -> {
+                // Resultado del disparo DEL RIVAL
+                val res = json.decodeFromString<AttackResult>(p)
+                myBoard.markShot(res.position, res.result)
+                println("💥 Rival: ${res.position} -> ${res.result}${if (res.sunk) " (HUNDIDO ${res.sunkShip})" else ""}")
+            }
+
+            "PVP_GAME_OVER" -> {
+                val over = json.decodeFromString<GameOver>(p)
+                println()
+                println("🏁 PVP GAME OVER -> ganador: ${over.winner} (${over.reason})")
+                renderBoards(myBoard, enemyRadar)
+                return
+            }
+
+            "INFO" -> {
+                val info = runCatching { json.decodeFromString<InfoMessage>(p) }.getOrNull()
+                if (info != null) println("ℹ️ ${info.message}")
+            }
+
+            "ERROR" -> {
+                val err = runCatching { json.decodeFromString<ErrorMessage>(p) }.getOrNull()
+                println("❌ Error: ${err?.message ?: p}")
+            }
+
+            else -> {
+                // Mensaje desconocido: lo mostramos por si acaso
+                println("⚠️ Mensaje desconocido: $t -> $p")
             }
         }
     }
@@ -452,4 +574,3 @@ private fun renderBoards(my: ClientBoard, radar: Radar) {
         println("$l   $r")
     }
 }
-

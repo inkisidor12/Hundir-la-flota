@@ -7,6 +7,14 @@
             "shots": 154,
             "hits": 58,
             "fastestWinTurns": 74
+        },
+        "kevin": {
+            "pveWins": 2,
+            "bestWinStreak": 2,
+            "currentWinStreak": 2,
+            "shots": 146,
+            "hits": 58,
+            "fastestWinTurns": 61
         }
     }
 }
