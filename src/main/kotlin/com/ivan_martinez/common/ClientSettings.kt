@@ -11,7 +11,8 @@ data class ClientSettings(
     val boardSize: Int = 10,
     val bestOf: Int = 3,
     val turnTimeSeconds: Int = 60,
-    val difficulty: Difficulty = Difficulty.NORMAL
+    val difficulty: Difficulty = Difficulty.NORMAL,
+    val placement: PlacementConfig? = null
 )
 
 @Serializable

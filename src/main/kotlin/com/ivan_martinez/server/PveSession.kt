@@ -1,6 +1,5 @@
 package com.ivan_martinez.server
 
-
 import com.ivan_martinez.common.*
 import kotlin.random.Random
 
@@ -10,9 +9,10 @@ data class PveStats(
     val playerTurns: Int
 )
 
-
-class PveSession(val size: Int) {
-    private val playerBoard = BattleshipBoard.randomBoard(size)
+class PveSession(
+    val size: Int,
+    private val playerBoard: BattleshipBoard = BattleshipBoard.randomBoard(size) // ✅ por defecto random
+) {
     private val aiBoard = BattleshipBoard.randomBoard(size)
 
     private val aiTried = mutableSetOf<Pair<Int, Int>>()
@@ -89,5 +89,4 @@ class PveSession(val size: Int) {
             sunkShip = out.sunkShip
         )
     }
-
 }

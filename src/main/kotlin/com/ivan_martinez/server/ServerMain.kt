@@ -41,9 +41,10 @@ fun main() = runBlocking {
 }
 
 private fun handleClient(socket: Socket, recordsPath: Path) {
-    // nombre del cliente
+
     var playerName: String? = null
     var pvpSession: PvpSession? = null
+    var pveSession: PveSession? = null
 
     val json = Json {
         ignoreUnknownKeys = true
@@ -54,57 +55,82 @@ private fun handleClient(socket: Socket, recordsPath: Path) {
         val input = BufferedReader(InputStreamReader(s.getInputStream()))
         val output = PrintWriter(s.getOutputStream(), true)
 
-        // 1) Enviar records al conectarse (requisito) usando el protocolo
+        // Enviar records iniciales
         val records = RecordsStorage.load(recordsPath)
         output.println(Protocol.encode("RECORDS", json.encodeToString(records)))
-
-        // 2) Mensaje info (también por protocolo, para que el cliente lo pueda parsear si quiere)
         output.println(Protocol.encode("INFO", json.encodeToString(InfoMessage("Servidor listo"))))
-
-        // Sesión PVE (una por cliente)
-        var session: PveSession? = null
 
         while (true) {
             val line = input.readLine() ?: break
             val (type, payload) = Protocol.decode(line)
 
             when (type) {
+
+                // ================= HELLO =================
                 "HELLO" -> {
                     val hello = json.decodeFromString<Hello>(payload)
                     val name = hello.name.trim()
                     playerName = if (name.isEmpty()) null else name
-                    output.println(Protocol.encode("INFO", json.encodeToString(InfoMessage("Hola ${playerName ?: "Jugador"}"))))
+                    output.println(
+                        Protocol.encode(
+                            "INFO",
+                            json.encodeToString(InfoMessage("Hola ${playerName ?: "Jugador"}"))
+                        )
+                    )
                 }
 
+                // ================= PVE =================
                 "NEW_GAME_PVE" -> {
                     val req = json.decodeFromString<NewGamePveRequest>(payload)
-                    val size = req.settings.boardSize // configurable (10 por defecto)
-                    session = PveSession(size)
+                    val size = req.settings.boardSize
 
-                    val started = session!!.gameStartedPayload()
+                    val board = if (req.placement != null) {
+                        val err = PlacementValidator.validate(size, req.placement)
+                        if (err != null) {
+                            output.println(
+                                Protocol.encode(
+                                    "ERROR",
+                                    json.encodeToString(ErrorMessage("Colocación inválida: $err"))
+                                )
+                            )
+                            continue
+                        }
+                        BattleshipBoard.fromPlacement(size, req.placement)
+                    } else {
+                        BattleshipBoard.randomBoard(size)
+                    }
+
+                    pveSession = PveSession(size, board)
+
+                    val started = pveSession!!.gameStartedPayload()
                     output.println(Protocol.encode("GAME_STARTED", json.encodeToString(started)))
                     output.println(Protocol.encode("TURN", json.encodeToString(TurnMessage(Attacker.PLAYER))))
                 }
 
                 "ATTACK" -> {
-                    val sSession = session
-                    if (sSession == null) {
-                        output.println(Protocol.encode("ERROR", json.encodeToString(ErrorMessage("No hay partida activa"))))
+                    val session = pveSession
+                    if (session == null) {
+                        output.println(
+                            Protocol.encode(
+                                "ERROR",
+                                json.encodeToString(ErrorMessage("No hay partida PVE activa"))
+                            )
+                        )
                         continue
                     }
 
                     val req = json.decodeFromString<AttackRequest>(payload)
-                    val msgs = sSession.playerAttack(req.position)
+                    val msgs = session.playerAttack(req.position)
 
                     for (m in msgs) {
                         when (m) {
-                            is AttackResult -> output.println(Protocol.encode("ATTACK_RESULT", json.encodeToString(m)))
+                            is AttackResult ->
+                                output.println(Protocol.encode("ATTACK_RESULT", json.encodeToString(m)))
 
                             is GameOver -> {
                                 val name = playerName
-
                                 if (name != null) {
-                                    val snap = sSession.statsSnapshot()
+                                    val snap = session.statsSnapshot()
                                     val won = (m.winner == Attacker.PLAYER)
 
                                     val rec = RecordsStorage.load(recordsPath)
@@ -122,31 +148,49 @@ private fun handleClient(socket: Socket, recordsPath: Path) {
                                 }
 
                                 output.println(Protocol.encode("GAME_OVER", json.encodeToString(m)))
+                                pveSession = null
                             }
 
-                            is TurnMessage -> output.println(Protocol.encode("TURN", json.encodeToString(m)))
-                            is ErrorMessage -> output.println(Protocol.encode("ERROR", json.encodeToString(m)))
-                            else -> output.println(Protocol.encode("ERROR", json.encodeToString(ErrorMessage("Mensaje desconocido"))))
+                            is TurnMessage ->
+                                output.println(Protocol.encode("TURN", json.encodeToString(m)))
+
+                            is ErrorMessage ->
+                                output.println(Protocol.encode("ERROR", json.encodeToString(m)))
+
+                            else ->
+                                output.println(
+                                    Protocol.encode(
+                                        "ERROR",
+                                        json.encodeToString(ErrorMessage("Mensaje desconocido"))
+                                    )
+                                )
                         }
                     }
                 }
+
+                // ================= GET RECORDS =================
                 "GET_RECORDS" -> {
-                    // Devuelve records actualizados al cliente (refresco tras una partida)
                     val rec = RecordsStorage.load(recordsPath)
                     output.println(Protocol.encode("RECORDS", json.encodeToString(rec)))
                 }
 
+                // ================= PVP =================
                 "QUEUE_PVP" -> {
                     val name = playerName
                     if (name == null) {
-                        output.println(Protocol.encode("ERROR", json.encodeToString(ErrorMessage("Primero envía HELLO"))))
+                        output.println(
+                            Protocol.encode(
+                                "ERROR",
+                                json.encodeToString(ErrorMessage("Primero envía HELLO"))
+                            )
+                        )
                         continue
                     }
 
                     val req = json.decodeFromString<QueuePvpRequest>(payload)
 
-                    // función para enviar mensajes por protocolo al cliente actual
-                    val sendMe: (String, String) -> Unit = { t, p -> output.println(Protocol.encode(t, p)) }
+                    val sendMe: (String, String) -> Unit =
+                        { t, p -> output.println(Protocol.encode(t, p)) }
 
                     val me = WaitingPvpPlayer(
                         name = name,
@@ -156,59 +200,72 @@ private fun handleClient(socket: Socket, recordsPath: Path) {
                     )
 
                     val other = PvpQueue.enqueueOrMatch(me)
+
                     if (other == null) {
                         sendMe("INFO", json.encodeToString(InfoMessage("Esperando rival...")))
                     } else {
-                        // Creamos tableros para ambos (auto-colocación por ahora)
+
                         val size = req.settings.boardSize
 
-                        val aOwn = BattleshipBoard.randomBoard(size)
-                        val bOwn = BattleshipBoard.randomBoard(size)
+                        val aBoard = BattleshipBoard.randomBoard(size)
+                        val bBoard = BattleshipBoard.randomBoard(size)
 
-                        // targetBoard: donde el rival dispara (mis barcos). En este diseño, targetBoard es mi propio tablero.
                         val session = PvpSession(
                             size = size,
-                            a = PvpSession.Side(name = other.name, send = other.send, ownBoard = bOwn, targetBoard = bOwn),
-                            b = PvpSession.Side(name = name, send = sendMe, ownBoard = aOwn, targetBoard = aOwn)
+                            a = PvpSession.Side(other.name, other.send, aBoard, aBoard),
+                            b = PvpSession.Side(name, sendMe, bBoard, bBoard)
                         )
 
-                        // Enganchamos sesión en ambos handlers
                         other.attachSession(session)
                         pvpSession = session
 
-                        // Avisamos y empezamos
                         other.send("INFO", json.encodeToString(InfoMessage("Rival encontrado: $name")))
                         sendMe("INFO", json.encodeToString(InfoMessage("Rival encontrado: ${other.name}")))
 
                         session.start(json)
                     }
                 }
+
                 "PVP_ATTACK" -> {
                     val sPvp = pvpSession
                     val name = playerName
                     if (sPvp == null || name == null) {
-                        output.println(Protocol.encode("ERROR", json.encodeToString(ErrorMessage("No hay partida PVP activa"))))
+                        output.println(
+                            Protocol.encode(
+                                "ERROR",
+                                json.encodeToString(ErrorMessage("No hay partida PVP activa"))
+                            )
+                        )
                         continue
                     }
 
                     val req = json.decodeFromString<AttackRequest>(payload)
-                    val winnerName = sPvp.attack(name, req.position, json)
+                    val winner = sPvp.attack(name, req.position, json)
 
-                    if (winnerName != null) {
-                        // Aquí luego actualizamos records PVP (wins/losses, etc.)
-                        // Por ahora: al terminar, dejamos la sesión a null
+                    if (winner != null) {
                         pvpSession = null
                     }
                 }
 
+                // ================= SALIR =================
                 "SALIR" -> {
-                    output.println(Protocol.encode("BYE", json.encodeToString(InfoMessage("Hasta luego"))))
+                    output.println(
+                        Protocol.encode(
+                            "BYE",
+                            json.encodeToString(InfoMessage("Hasta luego"))
+                        )
+                    )
                     playerName?.let { PvpQueue.cancelIfWaiting(it) }
                     break
                 }
 
                 else -> {
-                    output.println(Protocol.encode("ERROR", json.encodeToString(ErrorMessage("Comando no reconocido: $type"))))
+                    output.println(
+                        Protocol.encode(
+                            "ERROR",
+                            json.encodeToString(ErrorMessage("Comando no reconocido: $type"))
+                        )
+                    )
                 }
             }
         }

@@ -3,8 +3,7 @@ package com.ivan_martinez.common
 
 import kotlinx.serialization.Serializable
 
-@Serializable
-data class NewGamePveRequest(val settings: ClientSettings)
+
 
 @Serializable
 data class ShipPlacement(val ship: ShipType, val positions: List<String>)

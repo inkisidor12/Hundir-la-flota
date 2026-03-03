@@ -1,4 +1,4 @@
-package com.ivan_martinez.server
+package com.ivan_martinez.common
 
 
 object PositionCodec {

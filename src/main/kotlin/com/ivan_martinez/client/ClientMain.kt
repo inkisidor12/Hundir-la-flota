@@ -85,6 +85,8 @@ private fun menuLoop(
         println("3) Ver Records")
         println("4) Configuración")
         println("5) Salir")
+        println("6) Colocación manual de barcos (guardar)")
+        println("7) Borrar colocación guardada")
         print("Opción: ")
 
         when (readLine()?.trim()) {
@@ -109,6 +111,22 @@ private fun menuLoop(
                 output.println(Protocol.encode("SALIR", json.encodeToString(InfoMessage("bye"))))
                 input.readLine() // BYE...
                 return
+            }
+            "6" -> {
+                val placement = readManualPlacement(settings.boardSize)
+                if (placement != null) {
+                    val err = PlacementValidator.validate(settings.boardSize, placement)
+                    if (err != null) {
+                        println("❌ Colocación inválida: $err")
+                    } else {
+                        settings = settings.copy(placement = placement)
+                        println("✅ Colocación guardada en configuración.")
+                    }
+                }
+            }
+            "7" -> {
+                settings = settings.copy(placement = null)
+                println("✅ Colocación eliminada.")
             }
             else -> println("Opción inválida")
         }
@@ -144,13 +162,66 @@ private fun refreshRecords(recordsRef: RecordsRef, output: PrintWriter, input: B
         }
     }
 }
+private fun readManualPlacement(boardSize: Int): PlacementConfig? {
+    println()
+    println("=== COLOCACIÓN MANUAL ===")
+    println("Formato: TIPO=POS,POS,POS...")
+    println("Ej: CARRIER=A1,A2,A3,A4,A5")
+    println("Tipos: CARRIER, BATTLESHIP, CRUISER, DESTROYER")
+    println("Tienes que introducir: 1xCARRIER, 2xBATTLESHIP, 3xCRUISER, 4xDESTROYER")
+    println("Escribe 'fin' para terminar o 'cancelar' para salir.")
+    println()
+
+    val ships = mutableListOf<ShipPlacement>()
+
+    while (true) {
+        print("> ")
+        val line = readLine()?.trim().orEmpty()
+        if (line.equals("cancelar", true)) return null
+        if (line.equals("fin", true)) break
+        if (line.isEmpty()) continue
+
+        val parts = line.split("=")
+        if (parts.size != 2) {
+            println("❌ Formato inválido. Usa TIPO=POS,POS,...")
+            continue
+        }
+
+        val typeStr = parts[0].trim().uppercase()
+        val positionsStr = parts[1].trim()
+
+        val type = runCatching { ShipType.valueOf(typeStr) }.getOrNull()
+        if (type == null) {
+            println("❌ Tipo inválido: $typeStr")
+            continue
+        }
+
+        val positions = positionsStr.split(",").map { it.trim().uppercase() }.filter { it.isNotEmpty() }
+        if (positions.isEmpty()) {
+            println("❌ Debes indicar posiciones.")
+            continue
+        }
+
+        // Validación básica: dentro del tablero (para dar feedback rápido)
+        val ok = positions.all { PositionCodec.parse(it, boardSize) != null }
+        if (!ok) {
+            println("❌ Alguna posición está fuera del tablero $boardSize x $boardSize.")
+            continue
+        }
+
+        ships.add(ShipPlacement(type, positions))
+        println("✅ Añadido: $type -> $positions")
+    }
+
+    return PlacementConfig(ships)
+}
 
 private fun startPvp(output: PrintWriter, input: BufferedReader, settings: ClientSettings) {
     println()
     println("=== PVP: BUSCANDO RIVAL ===")
 
     // 1) Entramos en la cola PVP (matchmaking simple)
-    val req = QueuePvpRequest(settings)
+    val req = QueuePvpRequest(settings, settings.placement)
     output.println(Protocol.encode("QUEUE_PVP", json.encodeToString(req)))
 
     // 2) Esperamos PVP_MATCH_FOUND (saltando INFO/ERROR)
@@ -268,7 +339,7 @@ private fun startPve(output: PrintWriter, input: BufferedReader, settings: Clien
     println("=== PVE: NUEVA PARTIDA ===")
 
     // 1) Pedimos al servidor crear partida PVE
-    val req = NewGamePveRequest(settings)
+    val req = NewGamePveRequest(settings, settings.placement)
     output.println(Protocol.encode("NEW_GAME_PVE", json.encodeToString(req)))
 
     // 2) Esperamos GAME_STARTED (saltando INFO u otros mensajes)

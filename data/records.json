@@ -15,6 +15,14 @@
             "shots": 146,
             "hits": 58,
             "fastestWinTurns": 61
+        },
+        "benji": {
+            "pveWins": 1,
+            "bestWinStreak": 1,
+            "currentWinStreak": 1,
+            "shots": 61,
+            "hits": 29,
+            "fastestWinTurns": 61
         }
     }
 }
